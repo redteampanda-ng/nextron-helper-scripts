@@ -1,185 +1,12 @@
-##################################################
-# Script Title: THOR Download and Execute Script
-# Script File Name: thor-seed.ps1
-# Author: Florian Roth
-# Version: 0.20.1
-# Date Created: 13.07.2020
-# Last Modified: 26.04.2024
-##################################################
-
-#Requires -Version 3
-
-<#
-    .SYNOPSIS
-        The "thor-seed" script downloads THOR and executes it
-    .DESCRIPTION
-        The "thor-seed" script downloads THOR from an ASGARD instance, the Nextron cloud or a custom URL and executes THOR on the local system writing log files or transmitting syslog messages to a remote system
-    .PARAMETER AsgardServer
-        Enter the server name (FQDN) or IP address of your ASGARD instance.
-    .PARAMETER UseThorCloud
-        Use the official Nextron cloud systems instead of an ASGARD instance.
-    .PARAMETER Token
-        Download token used when connecting to Nextron's cloud service instead of an ASGARD instance.
-    .PARAMETER CustomUrl
-        Allows you to define a custom URL from which the THOR package is retrieved. Make sure that the package contains the full program folder, provide it as ZIP archive and add valid licenses (Incident Response license, THOR Lite license). THOR Seed will automatically find the THOR binaries in the extracted archive.
-    .PARAMETER Cockpit
-        Use this Analysis Cockpit to upload the THOR results
-    .PARAMETER CockpitKey
-        Use this API key for the upload to the Analysis Cockpit (Create a new user and role in your Analysis Cockpit. The role should only include the "Upload Events" permissions)
-    .PARAMETER RandomDelay
-        A random delay in seconds before the scan starts. This is helpful when you start the script on thousands of end systems to avoid system (VM host) or network (package retrieval) overload by distributing the load over a defined time range.
-    .PARAMETER OutputPath
-        Directory to write all output files to (default is script directory)
-    .PARAMETER NoLog
-        Do not write a log file in the current working directory of the PowerShell script named thor-seed.log.
-    .PARAMETER Debugging
-        Do not remove temporary files and show some debug outputs for debugging purposes.
-    .PARAMETER Cleanup
-        Removes all log and report files of previous scans
-    .PARAMETER IgnoreSSLErrors
-        Ignore connection errors caused by self-signed certificates
-    .PARAMETER ProxyAddress
-        Proxy address to use format: http://host:port
-    .PARAMETER ProxyCredentials
-        Proxy credentials to authenticate. Bye default Empty.
-    .EXAMPLE
-        Download THOR from asgard1.intranet.local (download token isn't required in on-premise installations)
-
-        thor-seed -AsgardServer asgard1.intranet.local
-    .EXAMPLE
-        Download THOR from THOR Cloud using a download token
-
-        thor-seed -UseThorCloud -Token wWfC0A0kMziG7GRJ5XEcGdZKw3BrigavxAdw9C9yxJX
-    .EXAMPLE
-        Download THOR or THOR Lite package from a custom URL and execute it. (this also works with THOR Lite)
-
-        thor-seed -CustomUrl https://web1.server.local/thor/mythor-pack.zip
-    .NOTES
-        You can set a static download token and ASGARD server in this file (see below in the parameters)
-
-        We recommend using the configuration sections in this script to adjust the scan settings.
-        It includes presets for scan configs and false positive filters.
-        See the $PresetConfig.. and $PresetFalsePositiveFilters below.
-
-#>
-
-# #####################################################################
-# Parameters ----------------------------------------------------------
-# #####################################################################
-
-param
-(
-    [Parameter(
-               HelpMessage = 'The ASGARD instance to download THOR from (license will be generated on that instance)')]
-    [ValidateNotNullOrEmpty()]
-    [Alias('AMC')]
-    [string]$AsgardServer,
-
-    [Parameter(HelpMessage = "Use Nextron's cloud to download THOR and generate a license")]
-    [ValidateNotNullOrEmpty()]
-    [Alias('CP')]
-    [switch]$UseThorCloud,
-
-    [Parameter(HelpMessage = "Set a download token (used with ASGARDs and THOR Cloud)")]
-    [ValidateNotNullOrEmpty()]
-    [Alias('T')]
-    [string]$Token,
-
-    [Parameter(HelpMessage = 'Allows you to define a Analysis Cockpit to upload the scan results')]
-    [ValidateNotNullOrEmpty()]
-    [Alias('AC')]
-    [string]$Cockpit,
-
-    [Parameter(HelpMessage = "Set the API key (used with your Analysis Cockpit)")]
-    [ValidateNotNullOrEmpty()]
-    [Alias('CK')]
-    [string]$CockpitKey,
-
-    [Parameter(HelpMessage = 'Allows you to define a custom URL from which the THOR package is retrieved')]
-    [ValidateNotNullOrEmpty()]
-    [Alias('CU')]
-    [string]$CustomUrl,
-
-    [Parameter(HelpMessage = 'Add a random sleep delay to the scan start to avoid all scripts starting at the exact same second')]
-    [ValidateNotNullOrEmpty()]
-    [Alias('RD')]
-    [int]$RandomDelay = 10,
-
-    [Parameter(HelpMessage = 'Directory to write all output files to (default is script directory)')]
-    [ValidateNotNullOrEmpty()]
-    [Alias('OP')]
-    [string]$OutputPath,
-
-    [Parameter(HelpMessage = 'Deactivates log file for this PowerShell script (thor-run.log)')]
-    [ValidateNotNullOrEmpty()]
-    [Alias('NL')]
-    [switch]$NoLog,
-
-    [Parameter(HelpMessage = 'Enables debug output and skips cleanup at the end of the scan')]
-    [ValidateNotNullOrEmpty()]
-    [Alias('D')]
-    [switch]$Debugging,
-
-    [Parameter(HelpMessage = 'Removes all log and report files of previous scans')]
-    [ValidateNotNullOrEmpty()]
-    [Alias('C')]
-    [switch]$Cleanup,
-
-    [Parameter(HelpMessage = 'Ignore connection errors caused by self-signed certificates')]
-    [ValidateNotNullOrEmpty()]
-    [Alias('I')]
-    [switch]$IgnoreSSLErrors,
-
-    [Parameter(HelpMessage = 'Proxy Address')]
-    [ValidateNotNullOrEmpty()]
-    [Alias('P')]
-    [string]$ProxyAddress,
-
-    [Parameter(HelpMessage = 'Proxy Credentials')]
-    [ValidateNotNullOrEmpty()]
-    [Alias('PC')]
-    [ValidateNotNull()]
-    [System.Management.Automation.PSCredential][System.Management.Automation.Credential()]
-    $ProxyCredentials = [System.Management.Automation.PSCredential]::Empty
-)
-
-# #####################################################################
-# Presets -------------------------------------------------------------
-# #####################################################################
-
-# Write local log file for THOR Seed script activity
-#[bool]$NoLog = $True
-
-# ASGARD Server (IP or FQDN)
-#[string]$AsgardServer = "asgard.beta.nextron-systems.com"
-
-# Use THOR Cloudselects only APT relevant directories for file system scan
-#[bool]$UseThorCloud = $True
-
-# Download Token
-# usable with THOR Cloud and ASGARD
-#[string]$Token = "YOUR DOWNLOAD TOKEN"
-
-# Analysis Cockpit (IP or FQDN)
-#[string]$Cockpit = "cockpit.beta.nextron-systems.com"
-
-# Cockpit Key
-# usable with your Analysis Cockpit
-#[string]$CockpitKey = "YOUR ANALYSIS COCKPIT API TOKEN"
-
-# Ignore SSL Errors
-# Helpful when using a local ASGARD instance
-#$IgnoreSSLErrors = $True
-
-# Random Delay (added before the scan start to distribute the initial load)
-#[int]$RandomDelay = 1
-
-# Custom URL with THOR package
-#[string]$CustomUrl = "https://internal-webserver1.intranet.local"
-
-# Custom Output Path
-# Choose an output directory for all output files (log, HTML report)
-#[string]$OutputPath = "C:\Windows\Temp"
+$ThorDirectory = "C:\thor-seed"
+$OutputPath = "C:\thor-seed\reports"
+$NoLog = $False
+$Hostname = [System.Net.Dns]::GetHostName()
+$ThorArch = "64"
+if ([System.Environment]::Is64BitOperatingSystem -eq $False)
+{
+    $ThorArch = ""
+}
 
 # Predefined YAML Config
 $UsePresetConfig = $True
@@ -201,7 +28,7 @@ $UsePresetConfig = $True
 #   - applies Sigma rules
 # cloudconf: [!]PresetConfig_FullLookback [Full Scan with Lookback] Performs a full disk scan with all modules but only checks elements changed or created within the last 14 days - best for SOC response to suspicious events (20 to 40 min)
 $PresetConfig_FullLookback = @"
-rebase-dir: $($OutputPath)  # Path to store all output files (default: script location)
+rebase-dir: $($ThorDirectory)  # Path to store all output files (default: script location)
 nosoft: true           # Don't throttle the scan, even on single core systems
 global-lookback: true  # Apply lookback to all possible modules
 lookback: 14           # Log and Eventlog look back time in days
@@ -222,7 +49,7 @@ nothordb: true         # Don't create a local SQLite database for differential a
 #   - skips Registry checks (keys with potential for persistence still get checked in Autoruns module)
 # cloudconf: PresetConfig_Quick [Quick Scan] Performs a quick scan on processes, caches, persistence elements and selected highly relevant directories (10 to 20 min)
 $PresetConfig_Quick = @"
-rebase-dir: $($OutputPath)  # Path to store all output files (default: script location)
+rebase-dir: $($ThorDirectory)  # Path to store all output files (default: script location)
 nosoft: true       # Don't throttle the scan, even on single core systems
 quick: true        # Quick scan mode
 nofserrors: true   # Don't print an error for non-existing directories selected in quick scan
@@ -241,7 +68,7 @@ nothordb: true     # Don't create a local SQLite database for differential analy
 #   - applies Sigma rules
 # cloudconf: PresetConfig_Full [Full Scan] Performs a full disk scan with all modules (40 min to 6 hours)
 $PresetConfig_Full = @"
-rebase-dir: $($OutputPath)  # Path to store all output files (default: script location)
+rebase-dir: $($ThorDirectory)  # Path to store all output files (default: script location)
 nosoft: true       # Don't throttle the scan, even on single core systems
 lookback: 14       # Log and Eventlog look back time in days
 # cpulimit: 70     # Limit the CPU usage of the scan
@@ -269,69 +96,19 @@ Signature file is older than 60 days
 
 # Fixing Certain Platform Environments --------------------------------
 $AutoDetectPlatform = ""
-if ($OutputPath -eq "")
+if ($ThorDirectory -eq "")
 {
-    $OutputPath = $PSScriptRoot
+    $ThorDirectory = $PSScriptRoot
 }
 
-# Microsoft Defender ATP - Live Response
-# $PSScriptRoot is empty or contains path to Windows Defender
-if ($OutputPath -eq "" -or $OutputPath.Contains("Windows Defender Advanced Threat Protection"))
-{
-    $AutoDetectPlatform = "MDATP"
-    # Setting output path to easily accessible system root, e.g. C:
-    if ($OutputPath -eq "")
-    {
-        $OutputPath = "$($env:ProgramData)\thor"
-    }
-}
 
 # Global Variables ----------------------------------------------------
 $global:NoLog = $NoLog
-
-# Show Help -----------------------------------------------------------
-# No ASGARD server
-if ($Args.Count -eq 0 -and $AsgardServer -eq "" -and $UseThorCloud -eq $False -and $CustomUrl -eq "")
-{
-    Get-Help $MyInvocation.MyCommand.Definition -Detailed
-    Write-Host -ForegroundColor Yellow 'Note: You must at least define an ASGARD server (-AsgardServer), use the Nextron cloud (-UseThorCloud) with an download token (-Token) or provide a custom URL to a THOR / THOR Lite ZIP package on a webserver (-CustomUrl)'
-    return
-}
-# THOR Cloud but no download token
-if ($UseThorCloud -eq $True -and $Token -eq "")
-{
-    Get-Help $MyInvocation.MyCommand.Definition -Detailed
-    Write-Host -ForegroundColor Yellow 'Note: You must provide an download token via command line parameter -Token or as preset value in the "presets" section of this PowerShell script.'
-    return
-}
-
-# Analysis Cockpit but no API key
-if (!([string]::IsNullOrEmpty($Cockpit)) -and ([string]::IsNullOrEmpty($CockpitKey)))
-{
-    Get-Help $MyInvocation.MyCommand.Definition -Detailed
-    Write-Host -ForegroundColor Yellow 'Note: You must provide an API key via command line parameter -CockpitKey or as preset value in the "presets" section of this PowerShell script.'
-    return
-}
 
 # #####################################################################
 # Functions -----------------------------------------------------------
 # #####################################################################
 
-function New-TemporaryDirectory
-{
-    $parent = [System.IO.Path]::GetTempPath()
-    $name = [System.IO.Path]::GetRandomFileName()
-    New-Item -ItemType Directory -Path (Join-Path $parent $name)
-}
-
-# Required for ZIP extraction in PowerShell version <5.0
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-function Expand-File
-{
-    param ([string]$ZipFile,
-        [string]$OutPath)
-    [System.IO.Compression.ZipFile]::ExtractToDirectory($ZipFile, $OutPath)
-}
 
 function Write-Log
 {
@@ -413,282 +190,12 @@ $StartTime = $(Get-Date)
 Write-Log "Started thor-seed with PowerShell v$($PSVersionTable.PSVersion)"
 
 # ---------------------------------------------------------------------
-# Evaluation ----------------------------------------------------------
-# ---------------------------------------------------------------------
-
-# Hostname
-$Hostname = [System.Net.Dns]::GetHostName()
-# Evaluate Architecture
-$ThorArch = "64"
-if ([System.Environment]::Is64BitOperatingSystem -eq $False)
-{
-    $ThorArch = ""
-}
-# License Type
-$LicenseType = "server"
-$PortalLicenseType = "server"
-$OsInfo = Get-CimInstance -ClassName Win32_OperatingSystem
-if ($osInfo.ProductType -eq 1)
-{
-    $LicenseType = "client"
-    $PortalLicenseType = "workstation"
-}
-
-# Output Info on Auto-Detection
-if ($AutoDetectPlatform -ne "")
-{
-    Write-Log "Auto Detect Platform: $($AutoDetectPlatform)"
-    Write-Log "Note: Some automatic changes have been applied"
-}
-
-# ---------------------------------------------------------------------
 # THOR still running --------------------------------------------------
 # ---------------------------------------------------------------------
 $ThorProcess = Get-Process -Name "thor64" -ErrorAction SilentlyContinue
 if ($ThorProcess)
 {
     Write-Log "A THOR process is still running." -Level "Error"
-}
-
-# Output File Overview
-$OutputFiles = Get-ChildItem -Path "$($OutputPath)\*" -Include "$($Hostname)_thor_*" | Sort-Object CreationTime
-if (-not $Cleanup)
-{
-    # Give help depending on the auto-detected platform
-    if ($AutoDetectPlatform -eq "MDATP")
-    {
-        Write-Log "Detected Platform: Microsoft Defender ATP"
-        if ($ThorProcess)
-        {
-            if ($OutputFiles.Length -gt 0)
-            {
-                Write-Log "Hint: You can use the following commands to retrieve the scan logs"
-                foreach ($OutFile in $OutputFiles)
-                {
-                    Write-Log "getfile `"$($OutFile.FullName)`"" -Level "Help"
-                }
-            }
-            else
-            {
-                Write-Log "The scan hasn't produced any output files yet."
-            }
-        }
-        # Cannot run new THOR instance as long as old log files are present
-        if (-not $ThorProcess -and $OutputFiles.Length -gt 0)
-        {
-            Write-Log "Cannot start new THOR scan as long as old report files are present" -Level "Error"
-            Write-Log "1.) Retrieve the available log files and HTML reports" -Level "Help"
-            foreach ($OutFile in $OutputFiles)
-            {
-                Write-Log "    getfile `"$($OutFile.FullName)`"" -Level "Help"
-            }
-            Write-Log "2.) Use the following command to cleanup the output directory and remove all previous reports" -Level "Help"
-            Write-Log "    run thor-seed.ps1 -parameters `"-Cleanup`"" -Level "Help"
-            Write-Log "3.) Start a new THOR scan with" -Level "Help"
-            Write-Log "    run thor-seed.ps1" -Level "Help"
-            return
-        }
-        else
-        {
-            Write-Log "No logs found of a previous scan"
-        }
-    }
-    else
-    {
-        Write-Log "Checking output folder: $($OutputPath)" -Level "Progress"
-        if ($OutputFiles.Length -gt 0)
-        {
-            Write-Log "Output files that have been generated so far:"
-            foreach ($OutFile in $OutputFiles)
-            {
-                Write-Log "$($OutFile.FullName)" -Level "Help"
-            }
-        }
-    }
-}
-
-# Quit if THOR is still running
-if ($ThorProcess -and $Cleanup)
-{
-    Write-Log "Please wait until the THOR scan is completed until you cleanup the logs (cleanup interrupted)" -Level "Error"
-}
-if ($ThorProcess)
-{
-    # Get current status
-    $LastTxtFile = Get-ChildItem -Path "$($OutputPath)\*" -Include "$($Hostname)_thor_*.txt" | Sort-Object LastWriteTime | Select-Object -Last 1
-    Write-Log "Last written log file is: $($LastTxtFile.FullName)"
-    Write-Log "Trying to get the last 3 log lines" -Level "Progress"
-    # Get last 3 lines
-    $LastLines = Get-content -Tail 3 $LastTxtFile
-    $OutLines = $LastLines -join "`r`n" | Out-String
-    Write-Log "The last 3 log lines are:"
-    Write-Log $OutLines
-
-    # Quit
-    return
-}
-
-# ---------------------------------------------------------------------
-# Cleanup Only --------------------------------------------------------
-# ---------------------------------------------------------------------
-if ($Cleanup)
-{
-    Write-Log "Starting cleanup" -Level "Progress"
-    # Remove logs and reports
-    Remove-Item -Confirm:$False -Recurse -Force -Path "$($OutputPath)\*" -Include "$($Hostname)_thor_*"
-    Write-Log "Cleanup complete"
-    return
-}
-
-# ---------------------------------------------------------------------
-# Get THOR ------------------------------------------------------------
-# ---------------------------------------------------------------------
-try
-{
-    # Random Delay
-    $LocalDelay = Get-Random -Minimum 0 -Maximum $RandomDelay
-    Write-Log "Adding random delay to the scan start (max. $($RandomDelay)): sleeping for $($LocalDelay) seconds" -Level "Progress"
-    Start-Sleep -Seconds $LocalDelay
-
-    # Presets
-    # Temporary directory for the THOR package
-    $ThorDirectory = New-TemporaryDirectory
-    $TempPackage = Join-Path $ThorDirectory "thor-package.zip"
-
-    # Generate Download URL
-    # Web Client
-    try
-    {
-        # Web Client
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        $WebClient = New-Object System.Net.WebClient
-        if ($Token)
-        {
-            $WebClient.Headers.add('Authorization', $Token)
-        }
-        # Proxy Support
-        if ($ProxyAddress)
-        {
-            $WebClient.Proxy = New-Object System.Net.WebProxy($ProxyAddress)
-        }
-        else
-        {
-            $WebClient.Proxy = [System.Net.WebRequest]::DefaultWebProxy
-        }
-        # https://docs.microsoft.com/en-us/powershell/scripting/learn/deep-dives/add-credentials-to-powershell-functions?view=powershell-5.1
-        if ($ProxyCredentials -ne [System.Management.Automation.PSCredential]::Empty)
-        {
-            $WebClient.Proxy.Credentials = $ProxyCredentials
-        }
-        else
-        {
-            $WebClient.Proxy.Credentials = [System.Net.CredentialCache]::DefaultNetworkCredentials
-        }
-        # Download Source
-        # Asgard Instance
-        if ($AsgardServer -ne "")
-        {
-            Write-Log "Attempting to download THOR from $AsgardServer" -Level "Progress"
-            # Generate download URL - pre ASGARD 2.11
-            #$DownloadUrl = "https://$($AsgardServer):8443/api/v0/downloads/thor/thor10-win?hostname=$($Hostname)&type=$($LicenseType)&iocs=%5B%22default%22%5D&token="
-            # Generate download URL - post ASGARD 2.11
-            $DownloadUrl = "https://$($AsgardServer):8443/api/v1/downloads/thor?os=windows&type=$($LicenseType)&scanner=thor10%40latest&signatures=signatures&hostname=$($Hostname)&token=$($Token)"
-        }
-        # Netxron Customer Portal
-        elseif ($UseThorCloud)
-        {
-            Write-Log 'Attempting to download THOR from Nextron cloud portal, please wait ...' -Level "Progress"
-            $DownloadUrl = "https://cloud.nextron-systems.com/api/public/thor10"
-            # Parameters
-            $WebClient.Headers.add('X-OS', 'windows')
-            $WebClient.Headers.add('X-Type', $PortalLicenseType)
-            if ($ThorArch -eq "64")
-            {
-                $WebClient.Headers.add('X-Arch', 'amd64')
-            }
-            else
-            {
-                $WebClient.Headers.add('X-Arch', 'x86')
-            }
-            $WebClient.Headers.add('X-Token', $Token)
-            $WebClient.Headers.add('X-Hostname', $Hostname)
-        }
-        # Custom URL
-        elseif ($CustomUrl -ne "")
-        {
-            $DownloadUrl = $CustomUrl
-        }
-        else
-        {
-            Write-Log 'Download URL cannot be generated (select one of the three options: $AsgardServer, $UseThorCloud or $CustomUrl'
-            break
-        }
-        # Actual Download
-        Write-Log "Download URL: $($DownloadUrl)"
-        # Ignore SSL/TLS errors
-        if ($IgnoreSSLErrors)
-        {
-            [Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-        }
-        $WebClient.DownloadFile($DownloadUrl, $TempPackage)
-        Write-Log "Successfully downloaded THOR package to $($TempPackage)"
-    }
-    # HTTP Errors
-    catch [System.Net.WebException] {
-        Write-Log "The following error occurred: $_" -Level "Error"
-        $Response = $_.Exception.Response
-        # 401 Unauthorized
-        if ([int]$Response.StatusCode -eq 401 -or [int]$Response.StatusCode -eq 403)
-        {
-            Write-Log "The server returned an 40X status code. Did you set an download token? (-Token key)" -Level "Warning"
-            if ($UseThorCloud)
-            {
-                Write-Log "Note: you can find your download token here: https://portal.nextron-systems.com/"
-            }
-            else
-            {
-                Write-Log "Note: you can find your download token here: https://$($AsgardServer):8443/ui/user-settings#tab-Token"
-            }
-        }
-        # 400
-        if ([int]$Response.StatusCode -eq 400)
-        {
-            Write-Log "This could be caused by a missing Download Token (check your ASGARD server's Settings section for the Global Download Token)" -Level "Warning"
-        }
-        # 409
-        if ([int]$Response.StatusCode -eq 409 -and $UseThorCloud)
-        {
-            Write-Log "You license pool has been exhausted (quota limit)" -Level "Warning"
-        }
-        # 500
-        if ([int]$Response.StatusCode -ge 500)
-        {
-            Write-Log "THOR cloud internal error. Please report this error or try again later. (please verify that you've used a correct Token - copy&paste error?)" -Level "Warning"
-        }
-        break
-    }
-    catch
-    {
-        Write-Log "The following error occurred: $_" -Level "Error"
-        break
-    }
-
-    # Unzip
-    try
-    {
-        Write-Log "Extracting THOR package" -Level "Progress"
-        Expand-File $TempPackage $ThorDirectory
-    }
-    catch
-    {
-        Write-Log "Error while expanding the THOR ZIP package $_" -Level "Error"
-        break
-    }
-}
-catch
-{
-    Write-Log "Download or extraction of THOR failed. $_" -Level "Error"
-    break
 }
 
 # ---------------------------------------------------------------------
@@ -834,99 +341,6 @@ try
 catch
 {
     Write-Log "Unknown error during THOR scan $_" -Level "Error"
-}
-
-# ---------------------------------------------------------------------
-# Analysis Cockpit Upload ---------------------------------------------
-# ---------------------------------------------------------------------
-if (!([string]::IsNullOrEmpty($Cockpit)) -and !([string]::IsNullOrEmpty($CockpitKey))) {
-    try {
-        # Finding THOR Logs
-        Write-Log "Trying to find the THOR Log in location $($OutputPath)" -Level "Progress"
-        $AllLogFiles = Get-ChildItem -Path $OutputPath -Filter "$($Hostname)_thor_*.txt" | Sort-Object CreationTime -Descending
-
-        # Check if any THOR logs were found
-        if ($AllLogFiles.Count -gt 0) {
-            # Select the newest THOR log
-            $NewestLogFile = $AllLogFiles[0].FullName
-            Write-Log "Found log file: $NewestLogFile" -Level "Progress"
-
-            $Boundary = [System.Guid]::NewGuid().ToString()
-            $ContentType = "multipart/form-data; boundary=$Boundary"
-
-            $Headers = @{
-                'accept' = 'application/json'
-                'Authorization' = $CockpitKey
-                'Content-Type' = $ContentType
-            }
-
-            # Construct the multipart form data body - cant be indented because formatting of powershell
-            $Body = @"
---$Boundary
-Content-Disposition: form-data; name="file[]"; filename="$(Split-Path $NewestLogFile -Leaf)"
-Content-Type: text/plain
-
-$(Get-Content -Raw $NewestLogFile)
---$Boundary--
-"@
-
-            $CockpitURI = "https://$($Cockpit)/api/scans/upload"
-
-            # Ignore self-signed certificates
-            if ($IgnoreSSLErrors) {
-                [System.Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}
-            }
-
-            $Response = Invoke-RestMethod -Method Post -Uri $CockpitURI -Headers $Headers -Body $Body -ErrorAction Stop
-            $StatusCode = $Response.StatusCode
-
-            # Check for specific status codes
-            if ($StatusCode -eq "200") {
-                Write-Log "Upload successful" -Level "Progress"
-            }
-            elseif ($StatusCode -eq "400") {
-                Write-Log "Invalid Parameters, check the API Documentation" -Level "Error"
-                Write-Log "Server Response: $($Response.Content)" -Level "Error"
-            }
-            elseif ($StatusCode -eq "403") {
-                Write-Log "Insufficient permissions" -Level "Error"
-            }
-            elseif ($StatusCode -eq "500") {
-                Write-Log "Internal Server Error" -Level "Error"
-                Write-Log "Server Response: $($Response.Content)" -Level "Error"
-            }
-            else {
-                Write-Log "Unknown error" -Level "Error"
-                Write-Log "Server Response: $($Response.Content)" -Level "Error"
-            }
-        }
-        else {
-            Write-Log "THOR Log not found in directory $($ThorDirectory)" -Level "Error"
-            break
-        }
-    }
-    catch {
-        Write-Log "Unknown error during THOR Log upload to Analysis Cockpit: $Cockpit" -Level "Error"
-    }
-}
-
-# ---------------------------------------------------------------------
-# Cleanup -------------------------------------------------------------
-# ---------------------------------------------------------------------
-try
-{
-    if ($Debugging -eq $False)
-    {
-        Write-Log "Cleaning up temporary directory with THOR package ..." -Level Process
-        # Delete THOR ZIP package
-        Remove-Item -Confirm:$False -Force -Recurse $TempPackage -ErrorAction Ignore
-        # Delete THOR Folder
-        Remove-Item -Confirm:$False -Recurse -Force $ThorDirectory -ErrorAction Ignore
-    }
-}
-catch
-{
-    Write-Log "Cleanup of temp directory $($ThorDirectory) failed. $_" -Level "Error"
 }
 
 # ---------------------------------------------------------------------
